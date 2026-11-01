@@ -17,9 +17,9 @@
 | | |
 |---|---|
 | **Bug** | Use-after-free in a TCP request socket (`request_sock_TCP`), in `reqsk_timer_handler()` |
-| **CVE** | **none assigned.** We requested an id from the kernel CNA on 2026-11-01; until one exists this is identified by its fix commit, `97c8a3c1f73d` |
-| **Fixed in** | Linux **v7.1**. Absent from v7.0 and from every 6.x series. Ubuntu backported it into **6.8.0-149** |
-| **Related, different CVE** | [**CVE-2026-98432**](https://www.cve.org/CVERecord?id=CVE-2026-98432) — *ipv4: free inet_opt and ireq_opt after an RCU grace period*, fixed by `e3f33b0a1d89`. Same function, **different bug**. Patching that one does not fix this one. |
+| **CVE** | **none assigned.** We requested an id from the kernel CNA on 2026-11-01. Until one exists this is identified by its fix: [Linux kernel commit `97c8a3c1f73d`](https://github.com/torvalds/linux/commit/97c8a3c1f73d828de43a5a88e8a9a143efb2b661) |
+| **Fixed in** | [Linux kernel](https://github.com/torvalds/linux) **v7.1**. Absent from v7.0 and from every 6.x series. Ubuntu backported it into **6.8.0-149** |
+| **Related, different CVE** | [**CVE-2026-98432**](https://www.cve.org/CVERecord?id=CVE-2026-98432) — *ipv4: free inet_opt and ireq_opt after an RCU grace period*, fixed by [Linux kernel commit `e3f33b0a1d89`](https://github.com/torvalds/linux/commit/e3f33b0a1d89). Same function, **different bug**. Patching that one does not fix this one. |
 
 ## What a vulnerable box allows an attacker to do
 
@@ -108,7 +108,7 @@ sequenceDiagram
     end
 ```
 
-The fix is one line in `net/ipv4/inet_connection_sock.c`:
+The fix is one line in the Linux kernel, [`net/ipv4/inet_connection_sock.c`](https://github.com/torvalds/linux/blob/v7.0/net/ipv4/inet_connection_sock.c) ([commit `97c8a3c1f73d`](https://github.com/torvalds/linux/commit/97c8a3c1f73d828de43a5a88e8a9a143efb2b661)):
 
 ```diff
 -  __inet_csk_reqsk_queue_drop(sk_listener, nreq, true);
