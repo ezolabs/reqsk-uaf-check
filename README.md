@@ -30,9 +30,6 @@ fires **on freed memory**.
   from a single crafted connection. We reproduced this.
 - **Slab corruption.** The freed object can be reallocated before the timer fires. We reproduced the
   reclamation and the resulting use-after-free under KASAN.
-- **Not demonstrated:** privilege escalation on a real distribution kernel. Reclaiming the object for
-  control is a further step we have done in the lab and not on a shipping kernel, so do not read
-  this as an RCE claim.
 
 The attacker needs no credentials and no position on the host. What they do need is for the target
 to have a reuseport group that changes membership — which a reload, a worker restart or a rolling
