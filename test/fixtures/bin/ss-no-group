@@ -1,0 +1,7 @@
+#!/bin/sh
+# Test fixture: one ordinary TCP listener, no SO_REUSEPORT group.
+cat <<'EOF'
+State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process
+LISTEN 0      4096   0.0.0.0:22         0.0.0.0:*    users:(("sshd",pid=10,fd=3)) ino:11 sk:1
+LISTEN 0      4096   [::]:22            [::]:*       users:(("sshd",pid=10,fd=4)) ino:12 sk:2
+EOF

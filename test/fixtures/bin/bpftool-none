@@ -1,0 +1,5 @@
+#!/bin/sh
+# Test fixture: no sk_reuseport program attached.
+cat <<'EOF'
+1: name another  type sched_cls  tag fedcba9876543210  gpl
+EOF

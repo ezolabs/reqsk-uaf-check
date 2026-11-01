@@ -1,0 +1,6 @@
+#!/bin/sh
+# Test fixture: one attached BPF_PROG_TYPE_SK_REUSEPORT program.
+cat <<'EOF'
+1: name reuseport_prog  type sk_reuseport  tag 0123456789abcdef  gpl
+2: name another         type sched_cls    tag fedcba9876543210  gpl
+EOF

@@ -1,0 +1,8 @@
+#!/bin/sh
+# Test fixture: pretends a SO_REUSEPORT group exists on TCP port 8080.
+# Two LISTEN sockets on the same exact local address:port require SO_REUSEPORT.
+cat <<'EOF'
+State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process
+LISTEN 0      4096   0.0.0.0:8080       0.0.0.0:*    users:(("nginx",pid=101,fd=6)) ino:111 sk:1
+LISTEN 0      4096   0.0.0.0:8080       0.0.0.0:*    users:(("nginx",pid=102,fd=6)) ino:112 sk:2
+EOF
