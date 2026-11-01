@@ -18,7 +18,7 @@
 |---|---|
 | **Bug** | Use-after-free in a TCP request socket (`request_sock_TCP`), in `reqsk_timer_handler()` |
 | **CVE** | **none assigned.** We requested an id from the kernel CNA on 2026-11-01. Until one exists this is identified by its fix: [Linux kernel commit `97c8a3c1f73d`](https://github.com/torvalds/linux/commit/97c8a3c1f73d828de43a5a88e8a9a143efb2b661) |
-| **Fixed in** | [Linux kernel](https://github.com/torvalds/linux) **v7.1**. Absent from v7.0, and absent from the 6.8, 6.12 and 6.18 series as shipped, including Ubuntu **6.8.0-149** whose `inet_connection_sock.c:1100` still passes `true` |
+| **Fixed in** | [Linux kernel](https://github.com/torvalds/linux) **v7.1** — `linux-7.1.y:1123` passes `false`. Still unfixed everywhere else we read it: `linux-7.0`, the `linux-6.12.y` branch at `:1161`, the `linux-6.18.y` branch at `:1138`, and Ubuntu **6.8.0-149** at `inet_connection_sock.c:1100`. Each still passes `true` |
 | **Related, different CVE** | [**CVE-2026-98432**](https://www.cve.org/CVERecord?id=CVE-2026-98432) — *ipv4: free inet_opt and ireq_opt after an RCU grace period*, fixed by [Linux kernel commit `e3f33b0a1d89`](https://github.com/torvalds/linux/commit/e3f33b0a1d89). Same function, **different bug**. Patching that one does not fix this one. |
 
 ## What a vulnerable box allows an attacker to do
@@ -131,8 +131,13 @@ number is a claim about upstream while a backport is what is actually installed.
 bash test/run-tests.sh
 ```
 
-48 assertions pass against fixture kernels: a patched image, a vulnerable image, an image whose BPF
-program map does not match, and one whose kcore is unreadable.
+48 assertions pass against the fixtures in `test/fixtures/`.
+
+Six cases additionally need real kernel binaries that are **not** shipped in this repository
+(`vmlinux.elf` and `vmlinuz-7.0.0-28-generic`, resolved from the project directory above the
+checkout). In a clean clone they print `SKIP  <name>  (missing <path>)` and do not run:
+`vulnerable-image`, `vulnerable-disabled`, `vulnerable-bpf`, `vulnerable-no-group`, `ss-partial`,
+`ss-no-header`. They pass wherever those two files are present.
 
 ## Limits
 
