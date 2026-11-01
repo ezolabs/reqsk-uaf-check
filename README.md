@@ -5,36 +5,85 @@
 <h1 align="center">reqsk-uaf-check</h1>
 
 <p align="center">
-  A read-only checker for a Linux kernel request-socket use-after-free.<br>
+  Does your Linux kernel have the fix? One command, read-only, no install.<br>
   <a href="https://github.com/ezolabs/reqsk-uaf-check/blob/main/LICENSE">MIT</a> ·
   <a href="https://ezolabs.io/security">EZO Labs security</a>
 </p>
 
 ---
 
-It tells you whether **your** kernel carries the fix for a slab use-after-free in
-`request_sock_TCP`. It does not scan anything remote, install anything, or write outside a
-private temporary directory.
-
-## Advisories
+## Which vulnerability this checks
 
 | | |
 |---|---|
-| Fix this checker decides | **`97c8a3c1f73d828de43a5a88e8a9a143efb2b661`** — "tcp: Fix potential UAF in `reqsk_timer_handler()`" |
-| CVE for that fix | **none assigned.** We requested an id from the kernel CNA on 2026-11-01; until one exists, this repository describes it by commit |
-| Related but **different** CVE | [**CVE-2026-98432**](https://www.cve.org/CVERecord?id=CVE-2026-98432) — *ipv4: free inet_opt and ireq_opt after an RCU grace period*, fixed by `e3f33b0a1d89` |
+| **Bug** | Use-after-free in a TCP request socket (`request_sock_TCP`), in `reqsk_timer_handler()` |
+| **CVE** | **none assigned.** We requested an id from the kernel CNA on 2026-11-01; until one exists this is identified by its fix commit, `97c8a3c1f73d` |
+| **Fixed in** | Linux **v7.1**. Absent from v7.0 and from every 6.x series. Ubuntu backported it into **6.8.0-149** |
+| **Related, different CVE** | [**CVE-2026-98432**](https://www.cve.org/CVERecord?id=CVE-2026-98432) — *ipv4: free inet_opt and ireq_opt after an RCU grace period*, fixed by `e3f33b0a1d89`. Same function, **different bug**. Patching that one does not fix this one. |
 
-**CVE-2026-98432 is not the bug this tool checks.** It lives in the same function and the same
-subsystem, and the two are routinely confused. That defect is a post-free *leak* of `ireq_opt`; this
-one is a *use-after-free* of the request socket itself, and it is fixed by a different commit. If a
-tool or an advisory tells you `e3f33b0a1d89` fixed your kernel, it has said nothing about
-`97c8a3c1f73d`.
+## What a vulnerable box allows an attacker to do
+
+The kernel frees a request socket while its timer is still queued. About a second later that timer
+fires **on freed memory**.
+
+- **Kernel panic.** Any host with a `SO_REUSEPORT` group that reloads is a remote denial of service
+  from a single crafted connection. We reproduced this.
+- **Slab corruption.** The freed object can be reallocated before the timer fires. We reproduced the
+  reclamation and the resulting use-after-free under KASAN.
+- **Not demonstrated:** privilege escalation on a real distribution kernel. Reclaiming the object for
+  control is a further step we have done in the lab and not on a shipping kernel, so do not read
+  this as an RCE claim.
+
+The attacker needs no credentials and no position on the host. What they do need is for the target
+to have a reuseport group that changes membership — which a reload, a worker restart or a rolling
+deploy does routinely.
+
+## Run it
+
+```sh
+sudo ./kernel-check.sh
+```
+
+Verdicts: **`VULNERABLE`** the fix is absent · **`PATCHED`** it is present · **`UNDETERMINED`** the
+image could not be read, and the check says so rather than guessing.
+
+Root is needed for a complete answer: `/proc/kcore` is mode `0400`, real `/proc/kallsyms` addresses
+need root or `CAP_SYSLOG` unless `kptr_restrict=0`, and `bpftool prog show` needs `CAP_BPF`. Run it
+unprivileged and those steps return `UNDETERMINED` — it tells you which step it could not do.
+
+It reads `/boot`, `/proc` and `bpftool prog show`. It writes only to its own `mktemp` directory and
+removes it on exit.
+
+```
+--proc-root DIR    alternative /proc (testing aid; default /proc)
+--boot-root DIR    alternative /boot (default /boot)
+--json             machine-readable output
+--help
+```
+
+## Is my host actually exposed?
+
+The verdict is necessary, not sufficient. All four must hold, and three are host-local:
+
+```mermaid
+flowchart TD
+    A[Kernel without the fix] --> B{SO_REUSEPORT group<br/>with 2+ TCP sockets?}
+    B -- no --> SAFE1[not exposed]
+    B -- yes --> C{Does a member leave<br/>TCP_LISTEN while a request<br/>is still in flight?}
+    C -- "no, it just stays up" --> SAFE2[not exposed<br/>a long-lived listener never triggers it]
+    C -- "yes: reload, worker restart,<br/>hot restart, rolling deploy" --> D{tcp_migrate_req=1<br/>or an sk_reuseport BPF program?}
+    D -- no --> SAFE3[not exposed<br/>the group detaches instead of migrating]
+    D -- yes --> E[clone path reachable<br/>→ possible use-after-free]
+```
+
+That third box is the one most deployments fail. A reuseport group that never changes membership is
+safe even on a vulnerable kernel. The checker reports the reuseport group, the BPF program and the
+`tcp_migrate_req` value so you can answer it.
 
 ## How the defect works
 
-A request socket is created for each incoming SYN. When a listener belongs to a `SO_REUSEPORT`
-group and one member of that group stops listening, the kernel can *migrate* the pending request to
-a surviving member — and it does that by **cloning** the request socket.
+A request socket is created for each incoming SYN. When a listener in a `SO_REUSEPORT` group stops
+listening, the kernel can migrate the pending request to a surviving member — by **cloning** it.
 
 ```mermaid
 sequenceDiagram
@@ -67,63 +116,17 @@ The fix is one line in `net/ipv4/inet_connection_sock.c`:
 ```
 
 The third argument tells the drop path whether the **caller** owns the timer. The error path does
-not — it never armed one on the original socket — so passing `true` leaves the clone's timer queued
-across the free. Passing `false` makes the drop path delete it.
+not — it never armed one on the original socket — so `true` leaves the clone's timer queued across
+the free. `false` makes the drop path delete it.
 
-## When a host is actually exposed
+## How the verdict is decided
 
-All four must hold, and three are host-local:
+From **the compiled instruction at the deciding call site**, never from the version string. On a
+vulnerable image the branch reads `movl $0x1,%edx` (`from_timer=1`); on a patched image,
+`xorl %edx,%edx`.
 
-```mermaid
-flowchart TD
-    A[Kernel without 97c8a3c1f73d] --> B{SO_REUSEPORT group<br/>with 2+ TCP sockets?}
-    B -- no --> SAFE1[not exposed]
-    B -- yes --> C{Does a member leave<br/>TCP_LISTEN while a request<br/>is still in flight?}
-    C -- "no, it just stays up" --> SAFE2[not exposed<br/>a long-lived listener never triggers it]
-    C -- "yes: reload, worker restart,<br/>hot restart, rolling deploy" --> D{tcp_migrate_req=1<br/>or an sk_reuseport BPF program?}
-    D -- no --> SAFE3[not exposed<br/>the group detaches instead of migrating]
-    D -- yes --> E[clone path reachable<br/>→ possible UAF]
-```
-
-That third box is the one most deployments fail. A `SO_REUSEPORT` group that never changes
-membership is safe even on a vulnerable kernel, because the clone is only created during migration.
-
-## What the check answers
-
-| verdict | meaning |
-|---|---|
-| `VULNERABLE` | the deciding call site passes `true` |
-| `PATCHED` | it passes `false` |
-| `UNDETERMINED` | the image needed to decide was not readable, and the check says so rather than guessing |
-
-The verdict comes from **the compiled instruction at the deciding call site**, never from the
-version string. That matters because distributors backport fixes without changing the version, and
-because a version number is a claim about upstream while a backport is what is actually installed.
-
-Concretely, on a vulnerable image the branch reads `movl $0x1,%edx` (`from_timer=1`); on a patched
-image, `xorl %edx,%edx`. The checker also reports whether a TCP `SO_REUSEPORT` group exists, whether
-an `sk_reuseport` BPF program is attached to it, and the value of `net.ipv4.tcp_migrate_req`.
-
-## Running it
-
-```sh
-sudo ./kernel-check.sh
-```
-
-Root is needed for a complete answer: `/proc/kcore` is mode `0400`, real `/proc/kallsyms` addresses
-need root or `CAP_SYSLOG` unless `kptr_restrict=0`, and `bpftool prog show` needs `CAP_BPF` to list
-all programs. Run it as an unprivileged user and those steps return `UNDETERMINED` rather than a
-guess — the check tells you which step it could not do.
-
-It reads `/boot`, `/proc`, and `bpftool prog show`. It writes only to its own `mktemp` directory and
-removes it on exit.
-
-```
---proc-root DIR    alternative /proc (testing aid; default /proc)
---boot-root DIR    alternative /boot (default /boot)
---json             machine-readable output
---help
-```
+That matters because distributors backport fixes without changing the version, and because a version
+number is a claim about upstream while a backport is what is actually installed.
 
 ## Tests
 
@@ -134,14 +137,13 @@ bash test/run-tests.sh
 48 assertions pass against fixture kernels: a patched image, a vulnerable image, an image whose BPF
 program map does not match, and one whose kcore is unreadable.
 
-## Coverage and limits
+## Limits
 
 - **x86-64 only.** It decodes the x86 instruction at the call site. On arm64 it reports
   `UNDETERMINED` rather than a wrong answer.
-- It answers for the kernel currently running, or for an image you point it at with `--boot-root`.
-- A `VULNERABLE` verdict means the kernel carries the defect. It does **not** mean a given host is
-  exploitable — that also needs a `SO_REUSEPORT` group that actually changes membership while a
-  request socket is alive, which the check reports but cannot force.
+- It answers for the running kernel, or for an image you point at with `--boot-root`.
+- `VULNERABLE` means the kernel carries the defect. It does not mean the host is exploitable — see
+  the exposure diagram.
 
 ## Credit
 
