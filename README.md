@@ -26,8 +26,12 @@
 The kernel frees a request socket while its timer is still queued. About a second later that timer
 fires **on freed memory**.
 
-- **Kernel panic.** Any host with a `SO_REUSEPORT` group that reloads is a remote denial of service
-  from a single crafted connection. We reproduced this.
+  - **Kernel panic.** A host needs three things at once: a `SO_REUSEPORT` group, the migration
+    capability (`net.ipv4.tcp_migrate_req=1`, or a `SK_REUSEPORT_SELECT_OR_MIGRATE` eBPF program
+    attached to the group), and a listener whose last fd closes while a request socket is still
+    queued. The group on its own does nothing: across eight stock hosts running `tcp_migrate_req=0`
+    we measured zero successful migrations from the same trigger that produced 1,884 once the sysctl
+    was set. We reproduced the panic in the lab with all three conditions met.
 - **Slab corruption.** The freed object can be reallocated before the timer fires. We reproduced the
   reclamation and the resulting use-after-free under KASAN.
 
